@@ -101,8 +101,10 @@ void HealthbarRenderer::UpdateCopCars() {
 
 void HealthbarRenderer::Draw()
 {
-	UpdateState();
+	UpdateState();//更新信息
 
+	//---------- 排除不显示血条的情况 --------------
+	//CopFreezeCam 不显示血条
 	if (pursuitActive && gameMomentCamEnabled && pursuitActiveCounter < 1.f && timeScale < 1.f) {
 		inCopFreezeCam = true;
 	}
@@ -113,19 +115,24 @@ void HealthbarRenderer::Draw()
 	if (isPaused && hideOnPause || !pursuitActive || inCopFreezeCam) {
 		return;
 	}
+	// -----------------------------------------------------
 
-	UpdateCopCars();
+	UpdateCopCars();//更新信息
 
 	healthBars.clear();
 
+	//遍历所有警车 确定血条的所有参数
 	for (auto& copCar : copCars) {
 		float alpha = 1;
 
 		CopCarInfo* car = &copCar.second;
+
+		//如果似透了 直接下一辆
 		if (car->health <= 0 && car->deathTimer >= 1.5f) {
 			continue;
 		}
 
+		// 刚刚似的 等它死透了再删血条
 		if (car->disabledTimer > 0.f) {
 			car->disabledTimer += simDeltaTime;
 			if (car->disabledTimer > 2.f)
@@ -136,51 +143,63 @@ void HealthbarRenderer::Draw()
 		HealthBarDraw healthBar;
 
 		float scale = 1;
+
+		//指定边框颜色
 		healthBar.borderColor = borderColor;
+
+		// 车辆已瘫痪
 		if (car->health <= 0) {
 			healthBar.borderColor = borderColorDestroyed;
 			if (car->deathTimer == 0) {
 				// died on this frame
+				//瘫痪时设置的生命值减少动画速度
 				car->deathReduceSpeed = std::max(car->healthAnimation, 0.75f);
-				car->healthReduceCountdown = 0;
+				car->healthReduceCountdown = 0;//设置动画延迟为0
 			}
 			// start fading out 1sec after death
+			//透明度逐渐增大 血条淡出
 			if (car->deathTimer > 1)
 				alpha *= 1.f - (car->deathTimer - 1.f) * 2.f;
 			car->deathTimer += simDeltaTime;
 		}
-		else {
+		else { //未瘫痪则强制重置计时器
 			car->deathTimer = 0;
 		}
 
+		//当车辆受到伤害后，控制代表“旧生命值”的白色动画条 (healthAnimation)，使其在短暂延迟后，平滑地缩减到与当前实际生命值 (health) 相同的位置
 		if (car->health < car->healthAnimation) {
+			//延迟逻辑：每次收到伤害后 延迟计时器会被设置为一个正数，然后随时间递减归零
 			if (car->healthReduceCountdown > 0) {
 				car->healthReduceCountdown -= simDeltaTime;
 			}
 			else {
 				if (car->health > 0) {
+					//逐渐减小边框长度 直到和血条长度相同
 					car->healthAnimation -= 0.75 * simDeltaTime;
 					if (car->health > car->healthAnimation)
 						car->healthAnimation = car->health;
-				}
+				}	
 				else {
+					//若直接瘫痪 则执行瘫痪时的动画逻辑
 					car->healthAnimation -= car->deathReduceSpeed * simDeltaTime;
 				}
 			}
 		}
-
+		//车辆瘫痪 则血条闪烁，同时设置计时器执行淡出步骤
 		if (car->health <= 0) {
 			// Flash when dead
 			float x = car->deathTimer / 0.05f + HALF_PI;
 			alpha *= sinf(x) / 2.f + 0.5f;
 		}
 
-		D3DXVECTOR3 barWorldPos = D3DXVECTOR3(car->position[2], -car->position[0], car->position[1] + height);
-		D3DXVec3Transform(&healthBar.drawPosViewSpace, &barWorldPos, viewMat);		
+		D3DXVECTOR3 barWorldPos = D3DXVECTOR3(car->position[2], -car->position[0], car->position[1] + height);//确定血条的3D世界坐标
+		D3DXVec3Transform(&healthBar.drawPosViewSpace, &barWorldPos, viewMat); //将3D坐标转换为摄像机坐标
 
+		//确保非0
 		float health = std::max(0.f, car->health);
 		float healthAnimation = std::max(0.f, car->healthAnimation);
 
+		// 确定血条颜色
 		if (health > 0.8)
 			healthBar.healthBarColor = green;
 		else if (health > 0.6)
@@ -192,6 +211,7 @@ void HealthbarRenderer::Draw()
 		else
 			healthBar.healthBarColor = red;
 
+		//血量条根据其与玩家摄像机的距离远近来改变透明度，从而实现近处淡入和远处淡出的平滑视觉效果
 		float depth = healthBar.drawPosViewSpace.z;
 		alpha *= saturate(map(depth, nearFadeOutMin, nearFadeOutMax, 0, 1));
 		alpha *= saturate(map(depth, farFadeOutMax, farFadeOutMin, 0, 1));
@@ -208,41 +228,56 @@ void HealthbarRenderer::Draw()
 		healthBar.health = health;
 		healthBar.healthAnimation = healthAnimation;
 
+		//加入数组
 		healthBars.emplace_back(healthBar);
 	}
 
+
+	// -------------------------- 核心绘制模块 ---------------------------------
 	// Sort back-to-front for correct transparency order
 	std::sort(healthBars.begin(), healthBars.end());
 
+	//初始化 准备渲染环境
 	primitiveRenderer.Begin(&projMat);
 
 	float barHalfHeight = barHeight / 2.f;
 	float barHalfWidth = barWidth / 2.f;
+
+	//循环并绘制每一个血量条
 	for (auto& healthBar : healthBars) {
 		D3DXVECTOR4* pos = &healthBar.drawPosViewSpace;
 
 		D3DXVECTOR4 screen[8] = {
+			//血条边框的四个角
 			D3DXVECTOR4(pos->x - barHalfWidth, pos->y - barHalfHeight, pos->z, 1),
 			D3DXVECTOR4(pos->x + barHalfWidth, pos->y - barHalfHeight, pos->z, 1),
 			D3DXVECTOR4(pos->x + barHalfWidth, pos->y + barHalfHeight, pos->z, 1),
 			D3DXVECTOR4(pos->x - barHalfWidth, pos->y + barHalfHeight, pos->z, 1),
 
+			//真实血量的位置（通过右侧顶点确定）
 			D3DXVECTOR4(pos->x + (-barHalfWidth + barWidth * healthBar.health), pos->y + barHalfHeight, pos->z, 1),
 			D3DXVECTOR4(pos->x + (-barHalfWidth + barWidth * healthBar.health), pos->y - barHalfHeight, pos->z, 1),
 
+			//血条边框的位置
 			D3DXVECTOR4(pos->x + (-barHalfWidth + barWidth * healthBar.healthAnimation), pos->y + barHalfHeight, pos->z, 1),
 			D3DXVECTOR4(pos->x + (-barHalfWidth + barWidth * healthBar.healthAnimation), pos->y - barHalfHeight, pos->z, 1),
 		};
 
+		//绘制血条
 		primitiveRenderer.DrawRect(healthBar.healthBarColor, screen[0], screen[5], screen[4], screen[3]);
+		
+		//如果血条有变化 则绘制动画条
 		if (healthBar.health < healthBar.healthAnimation) {
 			primitiveRenderer.DrawRect(healthBar.healthAnimationColor,screen[5], screen[7], screen[6], screen[4]);
 		}
+
+		//绘制边框
 		for (int i = 0; i < 4; i++) {
 			primitiveRenderer.DrawLine(healthBar.borderColor,8, screen[0], screen[1], screen[1], screen[2], screen[2], screen[3], screen[3], screen[0]);
 		}
 	}
 
+	//恢复渲染环境
 	primitiveRenderer.End();
 }
 

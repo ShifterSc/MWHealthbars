@@ -47,7 +47,7 @@ private:
 
 	bool isPaused;
 	float simDeltaTime;
-	float timeScale;
+	float timeScale; //时间流速
 	float currentSimTime;
 	float lastSimTime = -1;
 	float pursuitActiveCounter = 0;
