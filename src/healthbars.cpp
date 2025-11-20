@@ -36,6 +36,12 @@ const float nearFadeOutMax = 5.f;
 const float farFadeOutMin = 70.f;
 const float farFadeOutMax = 110.f;
 
+// ----------------- 测试： 在屏幕右下角绘制血条 ----------------------
+const bool showFarthestInCorner = true; // 一个开关，方便启用/禁用此功能
+const float cornerBarScale = 2.0f;      // 右下角血量条的缩放倍数 (让它更大更清晰)
+const D3DXVECTOR4 cornerBarPosition = D3DXVECTOR4(0.75f, -0.8f, 0.1f, 1.0f); // 右下角的位置 (X, Y在-1到1之间)
+// ---------------------------------------------------------------------
+
 float map(float x, float in_min, float in_max, float out_min, float out_max) {
 	return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
@@ -97,6 +103,38 @@ void HealthbarRenderer::UpdateCopCars() {
 		}
 	}
 
+}
+
+
+// 在 healthbars.cpp 文件中，可以在 HealthbarRenderer::Draw() 函数的上方或下方添加这个实现
+
+void HealthbarRenderer::DrawSingleHealthbar(const HealthBarDraw& healthBar, const D3DXVECTOR4& screenCenterPos, float scale)
+{
+	// 根据传入的缩放比例，计算血量条的半高和半宽
+	float barHalfHeight = (barHeight / 2.f) * scale;
+	float barHalfWidth = (barWidth / 2.f) * scale;
+	float finalBarWidth = barWidth * scale;
+
+	D3DXVECTOR4 screen[8] = {
+		D3DXVECTOR4(screenCenterPos.x - barHalfWidth, screenCenterPos.y - barHalfHeight, screenCenterPos.z, 1),
+		D3DXVECTOR4(screenCenterPos.x + barHalfWidth, screenCenterPos.y - barHalfHeight, screenCenterPos.z, 1),
+		D3DXVECTOR4(screenCenterPos.x + barHalfWidth, screenCenterPos.y + barHalfHeight, screenCenterPos.z, 1),
+		D3DXVECTOR4(screenCenterPos.x - barHalfWidth, screenCenterPos.y + barHalfHeight, screenCenterPos.z, 1),
+
+		D3DXVECTOR4(screenCenterPos.x + (-barHalfWidth + finalBarWidth * healthBar.health), screenCenterPos.y + barHalfHeight, screenCenterPos.z, 1),
+		D3DXVECTOR4(screenCenterPos.x + (-barHalfWidth + finalBarWidth * healthBar.health), screenCenterPos.y - barHalfHeight, screenCenterPos.z, 1),
+
+		D3DXVECTOR4(screenCenterPos.x + (-barHalfWidth + finalBarWidth * healthBar.healthAnimation), screenCenterPos.y + barHalfHeight, screenCenterPos.z, 1),
+		D3DXVECTOR4(screenCenterPos.x + (-barHalfWidth + finalBarWidth * healthBar.healthAnimation), screenCenterPos.y - barHalfHeight, screenCenterPos.z, 1),
+	};
+
+	primitiveRenderer.DrawRect(healthBar.healthBarColor, screen[0], screen[5], screen[4], screen[3]);
+	if (healthBar.health < healthBar.healthAnimation) {
+		primitiveRenderer.DrawRect(healthBar.healthAnimationColor, screen[5], screen[7], screen[6], screen[4]);
+	}
+
+	// 这里修复了原版重复绘制4次边框的问题
+	primitiveRenderer.DrawLine(healthBar.borderColor, 5, screen[0], screen[1], screen[2], screen[3], screen[0]);
 }
 
 void HealthbarRenderer::Draw()
@@ -201,7 +239,7 @@ void HealthbarRenderer::Draw()
 
 		// 确定血条颜色
 		if (health > 0.8)
-			healthBar.healthBarColor = green;
+			healthBar.healthBarColor = red;
 		else if (health > 0.6)
 			healthBar.healthBarColor = lightGreen;
 		else if (health > 0.4)
@@ -237,48 +275,34 @@ void HealthbarRenderer::Draw()
 	// Sort back-to-front for correct transparency order
 	std::sort(healthBars.begin(), healthBars.end());
 
-	//初始化 准备渲染环境
-	primitiveRenderer.Begin(&projMat);
+	// 1. **3D 绘制部分**
+	if (!healthBars.empty())
+	{
+		// 正常开始 3D 绘制
+		primitiveRenderer.Begin(&projMat);
 
-	float barHalfHeight = barHeight / 2.f;
-	float barHalfWidth = barWidth / 2.f;
-
-	//循环并绘制每一个血量条
-	for (auto& healthBar : healthBars) {
-		D3DXVECTOR4* pos = &healthBar.drawPosViewSpace;
-
-		D3DXVECTOR4 screen[8] = {
-			//血条边框的四个角
-			D3DXVECTOR4(pos->x - barHalfWidth, pos->y - barHalfHeight, pos->z, 1),
-			D3DXVECTOR4(pos->x + barHalfWidth, pos->y - barHalfHeight, pos->z, 1),
-			D3DXVECTOR4(pos->x + barHalfWidth, pos->y + barHalfHeight, pos->z, 1),
-			D3DXVECTOR4(pos->x - barHalfWidth, pos->y + barHalfHeight, pos->z, 1),
-
-			//真实血量的位置（通过右侧顶点确定）
-			D3DXVECTOR4(pos->x + (-barHalfWidth + barWidth * healthBar.health), pos->y + barHalfHeight, pos->z, 1),
-			D3DXVECTOR4(pos->x + (-barHalfWidth + barWidth * healthBar.health), pos->y - barHalfHeight, pos->z, 1),
-
-			//血条边框的位置
-			D3DXVECTOR4(pos->x + (-barHalfWidth + barWidth * healthBar.healthAnimation), pos->y + barHalfHeight, pos->z, 1),
-			D3DXVECTOR4(pos->x + (-barHalfWidth + barWidth * healthBar.healthAnimation), pos->y - barHalfHeight, pos->z, 1),
-		};
-
-		//绘制血条
-		primitiveRenderer.DrawRect(healthBar.healthBarColor, screen[0], screen[5], screen[4], screen[3]);
-		
-		//如果血条有变化 则绘制动画条
-		if (healthBar.health < healthBar.healthAnimation) {
-			primitiveRenderer.DrawRect(healthBar.healthAnimationColor,screen[5], screen[7], screen[6], screen[4]);
+		for (auto& healthBar : healthBars) {
+			DrawSingleHealthbar(healthBar, healthBar.drawPosViewSpace);
 		}
 
-		//绘制边框
-		for (int i = 0; i < 4; i++) {
-			primitiveRenderer.DrawLine(healthBar.borderColor,8, screen[0], screen[1], screen[1], screen[2], screen[2], screen[3], screen[3], screen[0]);
-		}
+		primitiveRenderer.End(); // 结束 3D 绘制
 	}
 
-	//恢复渲染环境
-	primitiveRenderer.End();
+	// 2. **2D 绘制部分**
+	if (showFarthestInCorner && !healthBars.empty())
+	{
+		// 再次调用 Begin，但这次传入单位矩阵作为投影矩阵
+		// 这会有效地建立一个 2D 坐标系
+		D3DXMATRIX identity;
+		D3DXMatrixIdentity(&identity);
+		primitiveRenderer.Begin(&identity);
+
+		const HealthBarDraw& farthestBar = healthBars.front();
+		DrawSingleHealthbar(farthestBar, cornerBarPosition, cornerBarScale);
+
+		primitiveRenderer.End(); // 结束 2D 绘制
+	}
+
 }
 
 void HealthbarRenderer::UpdateState()

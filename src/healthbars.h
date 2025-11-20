@@ -54,6 +54,7 @@ private:
 	bool pursuitActive = false;
 	bool gameMomentCamEnabled = false;
 	bool inCopFreezeCam = false;
+	void DrawSingleHealthbar(const HealthBarDraw& healthBar, const D3DXVECTOR4& screenCenterPos, float scale = 1.0f);
 
 	D3DXMATRIX* viewMat;
 	D3DXMATRIX* viewProjMat;	
