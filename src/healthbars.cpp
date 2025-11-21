@@ -12,10 +12,15 @@
 
 #define HALF_PI 1.5708f
 
-const int** copCarTable = (const int**)0x92ce9c;
-const int* numCopCars = (const int*)0x92cea4;
+const int** copCarTable = (const int**)0x92ce9c; //警车列表的基地址
+const int* numCopCars = (const int*)0x92cea4; //当前活跃警车的数量
 const float* deltaTime = (const float*)0x9259bc;
 const float* simTime = (const float*)0x9885d8;
+// ------------------- exp -----------------
+const float* playerDamageRatio = (const float*)0x009385BC; // 玩家损坏度的地址
+//似乎有错误
+//-------------------------------------------------
+
 
 // CONFIG
 const bool hideOnPause = false;
@@ -38,8 +43,8 @@ const float farFadeOutMax = 110.f;
 
 // ----------------- 测试： 在屏幕右下角绘制血条 ----------------------
 const bool showFarthestInCorner = true; // 一个开关，方便启用/禁用此功能
-const float cornerBarScale = 2.0f;      // 右下角血量条的缩放倍数 (让它更大更清晰)
-const D3DXVECTOR4 cornerBarPosition = D3DXVECTOR4(0.75f, -0.8f, 0.1f, 1.0f); // 右下角的位置 (X, Y在-1到1之间)
+const float cornerBarScale = 0.1f;      // 右下角血量条的缩放倍数 (让它更大更清晰)
+const D3DXVECTOR4 cornerBarPosition = D3DXVECTOR4(0.80f, -0.1f, 0.0f, 1.0f); // 右下角的位置 (X, Y在-1到1之间) || 坐标对应血条中点
 // ---------------------------------------------------------------------
 
 float map(float x, float in_min, float in_max, float out_min, float out_max) {
@@ -54,20 +59,27 @@ float saturate(float x) {
 	return x;
 }
 
+// --------- 待看 ----------------
 void HealthbarRenderer::UpdateCopCars() {
 	int numCops = *numCopCars;
+	//遍历每一台警车
 	for (int i = 0; i < numCops; i++) {
 		void* copCarPtr = (void*)(*copCarTable)[i];
 
-		VehicleClass vehicleClass = GETVAR(VehicleClass, copCarPtr, 0x6c);
+		VehicleClass vehicleClass = GETVAR(VehicleClass, copCarPtr, 0x6c); //基地址 + 偏移量
+		//跳过直升机
 		if (vehicleClass == VehicleClass::CHOPPER)
 			continue;
 
+		//往map里插入键值对
 		CopCarInfo* copCar = &copCars[copCarPtr];
 		copCar->health = 0;
 
+
+		//先通过偏移量找到存放损坏度的指针
 		void* destrVehiclePtr = DEREF(copCarPtr, 0x4c);
 		if (destrVehiclePtr) {
+			//再通过偏移量找到损坏度
 			copCar->health = 1 - GETVAR(float, destrVehiclePtr, 0x3c);
 			if (copCar->health >= copCar->healthAnimation) {
 				copCar->healthAnimation = copCar->health;
@@ -106,8 +118,8 @@ void HealthbarRenderer::UpdateCopCars() {
 }
 
 
-// 在 healthbars.cpp 文件中，可以在 HealthbarRenderer::Draw() 函数的上方或下方添加这个实现
-
+// 绘制单个血条：
+// 传入血条信息和坐标，然后执行绘制
 void HealthbarRenderer::DrawSingleHealthbar(const HealthBarDraw& healthBar, const D3DXVECTOR4& screenCenterPos, float scale)
 {
 	// 根据传入的缩放比例，计算血量条的半高和半宽
@@ -239,7 +251,7 @@ void HealthbarRenderer::Draw()
 
 		// 确定血条颜色
 		if (health > 0.8)
-			healthBar.healthBarColor = red;
+			healthBar.healthBarColor = green;
 		else if (health > 0.6)
 			healthBar.healthBarColor = lightGreen;
 		else if (health > 0.4)
@@ -279,6 +291,7 @@ void HealthbarRenderer::Draw()
 	if (!healthBars.empty())
 	{
 		// 正常开始 3D 绘制
+		// 3D绘制是用投影矩阵初始化
 		primitiveRenderer.Begin(&projMat);
 
 		for (auto& healthBar : healthBars) {
@@ -288,17 +301,47 @@ void HealthbarRenderer::Draw()
 		primitiveRenderer.End(); // 结束 3D 绘制
 	}
 
-	// 2. **2D 绘制部分**
-	if (showFarthestInCorner && !healthBars.empty())
+	// 2. **2D 绘制部分** - 现在改为绘制玩家血量条
+	if (showFarthestInCorner) // 我们继续复用这个开关，现在它的意思是“是否显示玩家血条”
 	{
-		// 再次调用 Begin，但这次传入单位矩阵作为投影矩阵
-		// 这会有效地建立一个 2D 坐标系
+		// 再次调用 Begin，进入 2D 坐标系
 		D3DXMATRIX identity;
 		D3DXMatrixIdentity(&identity);
 		primitiveRenderer.Begin(&identity);
 
-		const HealthBarDraw& farthestBar = healthBars.front();
-		DrawSingleHealthbar(farthestBar, cornerBarPosition, cornerBarScale);
+		// --- 这是替换的核心逻辑 ---
+
+		// a. 读取玩家的损坏度，并转换为生命值
+		float currentDamage = *playerDamageRatio;
+		float playerHealth = 1.0f - currentDamage;
+
+		// b. 创建一个临时的 HealthBarDraw 结构体来存储玩家血量信息
+		HealthBarDraw playerBar;
+		playerBar.health = std::max(0.0f, playerHealth); // 确保生命值不为负
+		playerBar.healthAnimation = playerBar.health; // 简单起见，我们暂不为玩家实现受伤动画
+		playerBar.borderColor = borderColor; // 使用正常的边框颜色
+
+		// c. 根据玩家当前血量设置颜色
+		if (playerBar.health > 0.8f)
+			playerBar.healthBarColor = green;
+		else if (playerBar.health > 0.6f)
+			playerBar.healthBarColor = lightGreen;
+		else if (playerBar.health > 0.4f)
+			playerBar.healthBarColor = yellow;
+		else if (playerBar.health > 0.2f)
+			playerBar.healthBarColor = orange;
+		else
+			playerBar.healthBarColor = red;
+
+		// d. (可选) 如果玩家车辆被摧毁，可以给一些特殊视觉效果
+		if (playerBar.health <= 0.0f) {
+			playerBar.borderColor = borderColorDestroyed;
+		}
+
+		// e. 调用我们的绘图函数，绘制玩家血量条！
+		DrawSingleHealthbar(playerBar, cornerBarPosition, cornerBarScale);
+
+		// --- 逻辑替换结束 ---
 
 		primitiveRenderer.End(); // 结束 2D 绘制
 	}
